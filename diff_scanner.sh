@@ -2,8 +2,13 @@
 
 # DiffScanner
 # Scans two folders (typically two copies of a codebase or other plain-text files) and allows the user to compare and resolve differing files.
+# by iritscen@yahoo.com
+#
+# HISTORY:
+# 1.0 - initial release
+# 1.1 - fixed date comparison mode
 
-###PARAMETER INITIALIZATION###
+### PARAMETER INITIALIZATION ###
 # Set the field separator to a newline to avoid spaces in paths breaking our variable-setting later
 IFS="
 "
@@ -26,8 +31,8 @@ if [ ! -d "$FOLDER1" ] || [ ! -d "$FOLDER2" ]; then
 	exit
 fi
 
-###VARIABLE INITIALIZATION###
-VERSION="1.0"
+### VARIABLE INITIALIZATION ###
+VERSION="1.1"
 MAXREPLACE=3000
 
 # Variables for stat collection
@@ -42,9 +47,9 @@ scan_progress=0
 # compare_mode tells the script to compare files by date ("d"), size ("s"), or md5 checksum ("c")
 compare_mode=""
 # unique_mode tells the script to display files which are unique to FOLDER1 (1), FOLDER2 (2), either side (3), to only show unique files (4), or to ignore unique files (0)
-unique_mode=
+unique_mode=-1
 # date_mode_base tells the script, in compare_mode "d", to report all files with differing modification dates (0), the files that are newer in FOLDER1 (1), or the files that are newer in FOLDER2 (2)
-date_mode_base=
+date_mode_base=-1
 # desired_suffix tells the script to only match files with that suffix (actually takes a regex pattern)
 desired_suffix=""
 # Used for file comparisons
@@ -52,7 +57,11 @@ mod_time1=0
 mod_time2=0
 size1=0
 size2=0
-# Set up trash and log paths
+# Declare file variables here so they are globals that can be accessed by bashtrap() upon force-quit
+FILE1=""
+FILE2=""
+
+# Set up Trash and log paths
 the_time=$(date "+%Y-%m-%d--%H-%M-%S")
 TRASH="$HOME/.Trash/DiffScanner's replaced files ($the_time)"
 mkdir "$TRASH"
@@ -62,20 +71,8 @@ if [ ! -d "$TRASH" ]; then
 fi
 LOG="$TRASH/DiffScanner log.txt"
 echo "DiffScanner "$VERSION" initializing..." >> $LOG
-# Declare file variables here so they are globals that can be accessed by bashtrap() upon force-quit
-FILE1=""
-FILE2=""
 
-# Well, we made it this far, so let's welcome the user
-echo "==========================="
-echo "Welcome to DiffScanner "$VERSION"."; echo
-echo "I see you would like to compare files in"
-echo "(1) $FOLDER1 and"
-echo "(2) $FOLDER2"; echo
-echo "Any files you choose to replace are not deleted, but can be found in the Trash."; echo
-echo "You can use the standard Ctrl+C to quit at any time if you get bored."; echo
-
-###UTILITY FUNCTIONS###
+### UTILITY FUNCTIONS ###
 # Set up exit message to print in event of user force-quitting script
 function bashtrap()
 {
@@ -149,9 +146,18 @@ function safeReplace()
 	fi
 }
 
+### INTRO MESSAGE ###
+echo "==========================="
+echo "Welcome to DiffScanner "$VERSION"."; echo
+echo "I see you would like to compare files in"
+echo "(1) $FOLDER1 and"
+echo "(2) $FOLDER2"; echo
+echo "Any files you choose to replace are not deleted, but can be found in the Trash."; echo
+echo "You can use the standard Ctrl+C to quit at any time if you get bored."; echo
+
 echo "Querying user for options..." >> $LOG
 
-###SUFFIX QUERY###
+### SUFFIX QUERY ###
 echo "Compare only (s)ource files (default), (a)ll files, or only the files with suffixes matching a (r)egex pattern that you will supply?"
 read desired_suffix
 if [ -z "$desired_suffix" ] || [ "$desired_suffix" == "s" ]; then
@@ -162,23 +168,22 @@ elif [ "$desired_suffix" == "r" ]; then
 	echo "Please enter the regex pattern to match, e.g. [mch] for all files ending in .m, .c, and .h."
 	read desired_suffix
 else
-	echo "Received input that was not \"a\", \"s\", Enter, or \"r\". DiffScanner will scan only source files."
-	desired_suffix="[mch]"
+	echo "Received input that was not Enter, \"s\", \"a\" or \"r\". Exiting."
+	exit
 fi
 
-###COMPARE MODE QUERY###
-echo "Search for differing files according to modification (d)ate, (s)ize, or (c)hecksum (default)?"
+### COMPARE MODE QUERY ###
+echo "Search for differing files according to (c)hecksum (default), modification (d)ate or file (s)ize?"
 read compare_mode
 if [ -z "$compare_mode" ]; then
-	compare_mode="c"
+	compare_mode="c" # default
 elif [ "$compare_mode" == "d" ]; then
 	# Now we need to know if only newer files are a concern, and which folder is the baseline for "newer"
-	echo "Report (a)ll files with differing dates, or only files that are newer on (o)ne side? (If you choose \"o\", the next question is which side.)"
+	echo "Report (a)ll files with differing dates (default), or only files that are newer on (o)ne side? (If you choose \"o\", the next question is which side.)"
 	read a
-	if [ -z "$a" ]; then
+	if [ -z "$a" ] || [ "$a" == "a" ]; then
 		date_mode_base=0
-	fi
-	if [ "$a" == "o" ]; then
+	elif [ "$a" == "o" ]; then
 		echo "On which side are you interested in seeing the newer files? Type \"1\" for $FOLDER1 and \"2\" for $FOLDER2."
 		read a
 		if [ "$a" -eq 1 ]; then
@@ -186,24 +191,26 @@ elif [ "$compare_mode" == "d" ]; then
 		elif [ "$a" -eq 2 ]; then
 			date_mode_base=2
 		else
-			date_mode_base=0
-			echo "Received input that was not \"1\" or \"2\"; DiffScanner will show all differing file dates…"
+			echo "Received input that was not \"1\" or \"2\". Exiting."
+			exit
 		fi
+	else
+	   echo "Received input that was not Enter, \"a\" or \"o\". Exiting."
+		exit
 	fi
 elif [ "$compare_mode" != "s" ] && [ "$compare_mode" != "c" ]; then
-	echo "DiffScanner received input which is not \"d\", \"s\", or \"c\". DiffScanner will compare by checksum."
-	compare_mode="c"
+	echo "DiffScanner received input which is not Enter, \"c\", \"d\" or \"s\". Exiting."
+	exit
 fi
 
-###UNIQUE MODE QUERY###
-echo "Show (a)ll files which are unique to either side,"
+### UNIQUE MODE QUERY ###
+echo "Show (a)ll files which are unique to either side (default),"
 echo "files which are unique to only one (s)ide,"
 echo "(o)nly show unique files and no matching ones, or"
-echo "(i)gnore unique files? (If you choose \"s\", the next question is which side.) (default = all)"
+echo "(i)gnore unique files? (If you choose \"s\", the next question is which side.)"
 read a
-# If user entered nothing, use the "all" choice
-if [ -z "$a" ]; then
-	unique_mode=3
+if [ -z "$a" ] || [ "$a" == "a" ]; then
+	unique_mode=3 # default
 elif [ "$a" == "s" ]; then
 	echo "On which side are you interested in seeing files that are unique?"
 	echo "(1) $FOLDER1 or"
@@ -214,26 +221,29 @@ elif [ "$a" == "s" ]; then
 	elif [ "$a" -eq 2 ]; then
 		unique_mode=2
 	else
-		unique_mode=3
-		echo "Received input that was not \"1\" or \"2\"; DiffScanner will show all unique files…"
+		echo "Received input that was not \"1\" or \"2\". Exiting."
+		exit
 	fi
 elif [ "$a" == "i" ]; then
 	unique_mode=0
 elif [ "$a" == "o" ]; then
 	unique_mode=4
 else
-	unique_mode=3
-	echo "Received input that was not \"a\", \"o\", or \"i\"; DiffScanner will show all unique files…"
+	echo "Received input that was not Enter, \"a\", \"s\", \"o\" or \"i\". Exiting."
+	exit
 fi
 
-###MODE REPORTING###
+### MODE REPORTING ###
 if [ $compare_mode == "d" ] && [ $unique_mode != 4 ]; then
-	if [ "$date_mode_base" -eq 0 ]; then
+	if [ $date_mode_base -eq 0 ]; then
 		echo "Scanning the designated folders for files that are newer on either side." | tee -a $LOG
-	elif [ "$date_mode_base" -eq 1 ]; then
+	elif [ $date_mode_base -eq 1 ]; then
 		echo "Scanning the designated folders for files that are newer in $FOLDER1." | tee -a $LOG
-	elif [ "$date_mode_base" -eq 2 ]; then
+	elif [ $date_mode_base -eq 2 ]; then
 		echo "Scanning the designated folders for files that are newer in $FOLDER2." | tee -a $LOG
+	else
+	   echo "Date comparison mode was not set. Exiting."
+	   exit
 	fi
 elif [ $compare_mode == "s" ] && [ $unique_mode != 4 ]; then
 	echo "Scanning the designated folders for files that differ in size." | tee -a $LOG
@@ -255,13 +265,13 @@ fi
 echo
 scan_progress=1
 
-###FOLDER1 SCAN###
+### FOLDER1 SCAN ###
 # Check FOLDER1 for files that have differing mod. dates or that are unique to FOLDER1
 for FILE1 in `find $FOLDER1 -type f -name "*.${desired_suffix}" -a ! -name ".DS_Store" -a ! -wholename "*.svn*" -a ! -wholename "*/build/*"`; do
 	# Change the file's path string to be in FOLDER2
 	FILE2=${FILE1#$FOLDER1}
 	FILE2=${FOLDER2}${FILE2}
-	###UNIQUE MODE SCAN###
+	## UNIQUE MODE SCAN ##
 	# If there is no such file in FOLDER2 and we are not ignoring unique files...
 	if [ ! -f "$FILE2" ] && [ $unique_mode -gt 0 ]; then
 		let num_unique_1+=1
@@ -279,14 +289,13 @@ for FILE1 in `find $FOLDER1 -type f -name "*.${desired_suffix}" -a ! -name ".DS_
 		 fi
 	# If there is such a file in FOLDER2 and we are not ignoring matching files...
 	elif [ -f "$FILE2" ] && [ $unique_mode -lt 4 ]; then
-		 ###DATE MODE SCAN###
+		 ## DATE MODE SCAN ##
 		 if [ $compare_mode == "d" ]; then
 			# First find out which file is older, if either
-			### Use quotes around $FILE1?
-			mod_time1=$(stat -s $FILE1)
+			mod_time1=$(stat -s "$FILE1")
 			mod_time1=${mod_time1#*st_mtime=*}
 			mod_time1=${mod_time1%% *}
-			mod_time2=$(stat -s $FILE2)
+			mod_time2=$(stat -s "$FILE2")
 			mod_time2=${mod_time2#*st_mtime=*}
 			mod_time2=${mod_time2%% *}
 			if [ $mod_time1 -gt $mod_time2 ]; then
@@ -376,7 +385,7 @@ for FILE1 in `find $FOLDER1 -type f -name "*.${desired_suffix}" -a ! -name ".DS_
 				fi
 			fi
 			echo
-		###SIZE MODE SCAN###
+		## SIZE MODE SCAN ##
 		elif [ $compare_mode == "s" ]; then
 			size1=$(stat -s "$FILE1")
 			size1=${size1#*st_size=*}
@@ -434,7 +443,7 @@ for FILE1 in `find $FOLDER1 -type f -name "*.${desired_suffix}" -a ! -name ".DS_
 					echo "${FILE1#$FOLDER1} differed in size between $FOLDER1 and $FOLDER2; the file was skipped." >> $LOG
 				fi
 			fi
-		###CHECKSUM MODE SCAN###
+		## CHECKSUM MODE SCAN ##
 		elif [ $compare_mode == "c" ]; then
 			md1=$(md5 "$FILE1" | grep -o "\b[[:alnum:]]*$")
 			md2=$(md5 "$FILE2" | grep -o "\b[[:alnum:]]*$")
@@ -494,7 +503,7 @@ done
 
 scan_progress=2
 
-###FOLDER2 UNIQUE MODE SCAN###
+### FOLDER2 UNIQUE MODE SCAN ###
 # Check FOLDER2 for files that are unique to FOLDER2
 for FILE2 in `find $FOLDER2 -type f -name "*.${desired_suffix}" -a ! -name ".DS_Store" -a ! -wholename "*.svn*" -a ! -wholename "*/build/*"`; do
 	FILE1=${FILE2#$FOLDER2}
